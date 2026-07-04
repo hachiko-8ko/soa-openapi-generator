@@ -19,13 +19,19 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Publish
-        run: dotnet publish -c Release -o ./publish
+      - name: Publish Windows (Self-contained EXE)
+        run: |
+          dotnet publish -c Release -r win-x64 -o ./publish-win -p:PublishSingleFile=true --self-contained true
+          zip -r soa-openapi-generator-win-x64.zip ./publish-win
 
-      - name: Archive publish directory
-        run: zip -r soa-openapi-generator.zip ./publish
+      - name: Publish Cross-Platform (Framework Dependent)
+        run: |
+          dotnet publish -c Release -o ./publish-cross
+          zip -r soa-openapi-generator-crossplatform.zip ./publish-cross
 
-      - name: Upload Release Asset
+      - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: soa-openapi-generator.zip
+          files: |
+            soa-openapi-generator-win-x64.zip
+            soa-openapi-generator-crossplatform.zip

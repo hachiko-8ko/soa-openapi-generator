@@ -82,7 +82,9 @@ If the path contains a field surrounded by {} like {id} a parameter is automatic
 
 ## Execution
 
-It's a console application that takes no input parameters. Just update the config file and run the EXE.
+It's a console application that takes no input parameters. Just update the config file and run the EXE (on windows) or "dotnet soa-openapi-generator.dll" (cross-platform).
+
+Windows build should be self-contained and cross-platform build is a smaller package that depends on dotnet being installed.
 
 ## Limitations
 
