@@ -1,6 +1,25 @@
 # SOA OpenAPI Generator
 
-Imagine that you have an SOA web api. That's _string oriented architecture_. No types, no classes, the API just pulls strings out of the request content and returns strings as the result content.
+Imagine that you have an SOA web api. That's _string oriented architecture_. No types, no classes, the API just pulls strings out of the request content and returns strings as the result content. For example, maybe your API methods look like this:
+
+```
+  [HttpPost("/api/order/addNew")]
+  public string AddOrder([FromBody] jsonBodyContent)
+  ...
+```
+
+or you could have this:
+
+```
+  [HttpPost("/api/order/addNew")]
+  public string AddOrder()
+  {
+    using var body = new StreamReader(Request.Body);
+    var jsonBodyContent = await body.ReadToEnd();
+  ...
+```
+
+If this sounds like your situation, this tool is for you.
 
 Let's talk Swagger (now called OpenAPI). Swashbuckle, while an amazing library, a solid friend over years of writing ASP.NET web APIs, is going to break down and cry. But just because Swashbuckle can't autogenerate input/output contracts without knowing about the types doesn't mean you shouldn't get to enjoy the excellent swagger UI, so we at the Slop Company would like to share it with you now in a project we call _SOA OpenAPI Generator_.
 
@@ -90,7 +109,7 @@ Windows build should be self-contained and cross-platform build is a smaller pac
 
 Right now, this is in an early version. There are no guarantees that we're going to add new features. Or not. Only one person (watashi) has ever used any of this personal code, so feature sets tend to be either very limited or excessive (a bit too much "wouldn't it be neat if" going on here TBH).
 
-But working with broken AI is so frustrating that as soon as I have something stable, I'm going to back away slowly while making soothing sounds while looking around for a rock. And installing .NET ate up all the space I'd cleared over the last few weeks, so I have the urge to delete it and free up a critical GB of spinning rust.
+But working with broken AI is so frustrating that as soon as I have something stable, I'm going to back away slowly while making soothing sounds while looking around for a rock. And installing .NET is a challenge. In a post-Altman world, the process for big software is something like (1) purge data from spinning rust, (2) install big files, (3) work, (4) uninstall big files. When I reach step 4 for .NET SDK, I don't expect a lot of new features for a while.
 
 So here are the current limits:
 
