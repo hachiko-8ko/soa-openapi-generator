@@ -96,6 +96,7 @@ static class SwaggerBuilder
 
         // everything hinges on the input json, meaning if you want an endpoint with no input, you have to add a file containing the word null
         // (this could be changed fairly easily to search for one or the other but it's not very useful)
+        // TODO: At the moment, this means GET need a file named GET foo.input.jon with null for body. Better to change that
         var inputFiles = Directory.EnumerateFiles(inputFolder, "*.input.json", SearchOption.AllDirectories);
 
         foreach (var inputFilePath in inputFiles.OrderBy(o => o))
@@ -103,7 +104,7 @@ static class SwaggerBuilder
             await AddEndpointToDocument(document, inputFilePath);
         }
 
-        string openApiJson = await document.SerializeAsJsonAsync(OpenApiSpecVersion.OpenApi3_1);
+        string openApiJson = await document.SerializeAsJsonAsync(OpenApiSpecVersion.OpenApi3_0);
 
         await File.WriteAllTextAsync(Path.Combine(outputFolder, "swagger.json"), openApiJson);
 
@@ -123,13 +124,45 @@ static class SwaggerBuilder
         string apiRoute = relativePath.Replace(".input.json", "").Replace(Path.DirectorySeparatorChar, '/');
         Console.WriteLine($"Processing: {apiRoute}");
 
+        // If filename has a space in it, the word before the space should be a HTTP Verb. EX "GET url.input.json" (both could exist).
+        // If no filename (just url.input.json), it is assumed to be a post.
+        // Note: Most servers do not accept certain verbs with bodies, but this program ties everything to an ".input.json" file.
+        // In the future, this will base the main loop on ANY ".something.json" file, but for now just add an empty file.
+
+        // Look for a space. If found, overwrite apiRoute and httpVerb. If multiple spaces, invalid setup.
+        HttpMethod httpVerb = HttpMethod.Post;
+        if (apiRoute.Contains(' '))
+        {
+            var directoryPath = Path.GetDirectoryName(apiRoute);
+            var finalFile = Path.GetFileNameWithoutExtension(apiRoute);
+
+            var splitUp = finalFile.Split([" "], 2, StringSplitOptions.RemoveEmptyEntries);
+            httpVerb = splitUp[0].ToLower() switch
+            {
+                "get" => HttpMethod.Get,
+                "post" => HttpMethod.Post,
+                "put" => HttpMethod.Put,
+                "patch" => HttpMethod.Patch,
+                "delete" => HttpMethod.Delete,
+                _ => HttpMethod.Post
+            };
+            finalFile = splitUp[1];
+            apiRoute = directoryPath + "/" + finalFile;
+        }
+
+        // Spaces aren't allowed in URLs unless escaped
+        if (apiRoute.Contains(' '))
+        {
+            throw new InvalidOperationException($"{inputFilePath} has an invalid URI");
+        }
+
         var config = await ReadConfiguration(inputFilePath.Replace(".input.json", ".config.json"));
 
         // get a clean, human-readable tag/category from the top-level directory folder name
         string[] routeSegments = apiRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var controllerTag = new OpenApiTagReference(SanitizeTagName(routeSegments.Length > 1 ? routeSegments[0] : "General"));
 
-        var postOperation = new OpenApiOperation
+        var operation = new OpenApiOperation
         {
             Summary = config?.Summary ?? $"Execute [{apiRoute}]",
             Description = config?.Description ?? "Executes the selected endpoint",
@@ -137,11 +170,6 @@ static class SwaggerBuilder
             {
                 controllerTag,
             },
-            // inject the input payload schema as the HTTP POST Request Body
-            RequestBody = new OpenApiRequestBody
-            {
-                Description = "Input Payload Content"
-            }
         };
 
         // very simple assumption, {this} only appears if there is a param
@@ -159,8 +187,8 @@ static class SwaggerBuilder
             }
         }
 
-        await AddEndpointRequestToDocument(document, inputFilePath, apiRoute, postOperation, config);
-        await AddEndpointResponseToDocument(document, inputFilePath.Replace(".input.json", ".output.json"), apiRoute, postOperation);
+        await AddEndpointRequestToDocument(document, inputFilePath, apiRoute, operation, httpVerb, config);
+        await AddEndpointResponseToDocument(document, inputFilePath.Replace(".input.json", ".output.json"), apiRoute, operation, httpVerb);
 
         string cleanRoute = $"/{apiRoute.TrimStart('/')}";
         if (!document.Paths.TryGetValue(cleanRoute, out var pathItem))
@@ -169,18 +197,18 @@ static class SwaggerBuilder
             {
                 Operations = new Dictionary<HttpMethod, OpenApiOperation>
                 {
-                    [HttpMethod.Post] = postOperation
+                    [httpVerb] = operation
                 }
             };
             document.Paths.Add(cleanRoute, pathItem);
         }
-        if (pathItem.Operations!.ContainsKey(HttpMethod.Post))
+        if (pathItem.Operations!.ContainsKey(httpVerb))
         {
             // If it already exists from another process, remove it first
-            pathItem.Operations.Remove(HttpMethod.Post);
+            pathItem.Operations.Remove(httpVerb);
         }
 
-        pathItem.Operations.Add(HttpMethod.Post, postOperation);
+        pathItem.Operations.Add(httpVerb, operation);
 
         static string SanitizeTagName(string route)
         {
@@ -191,11 +219,11 @@ static class SwaggerBuilder
         }
     }
 
-    static async Task AddEndpointRequestToDocument(OpenApiDocument document, string filePath, string apiRoute, OpenApiOperation postOperation, EndpointConfiguration? config)
+    static async Task AddEndpointRequestToDocument(OpenApiDocument document, string filePath, string apiRoute, OpenApiOperation operation, HttpMethod httpVerb, EndpointConfiguration? config)
     {
         foreach (var param in config?.QueryParams ?? [])
         {
-            postOperation.Parameters ??= [];
+            operation.Parameters ??= [];
 
             // Add a query parameter for each row
             JsonSchemaType parameterType = param.Type?.ToLower() switch
@@ -222,13 +250,13 @@ static class SwaggerBuilder
                 Required = param.Required == true || isPathParam // path must be required
             };
 
-            postOperation.Parameters.Add(openApiParam);
+            operation.Parameters.Add(openApiParam);
         }
 
         string jsonContent = await File.ReadAllTextAsync(filePath);
-        if (!string.IsNullOrWhiteSpace(jsonContent) && jsonContent != "null")
+        if (httpVerb != HttpMethod.Get && httpVerb != HttpMethod.Delete && !string.IsNullOrWhiteSpace(jsonContent) && jsonContent != "null")
         {
-            string schemaName = $"Request_{SanitizeSchemaName(apiRoute)}";
+            string schemaName = $"Request_{httpVerb}_{SanitizeSchemaName(apiRoute)}";
 
             using var jsonDoc = JsonDocument.Parse(jsonContent);
 
@@ -241,10 +269,10 @@ static class SwaggerBuilder
                 document.Components.Schemas.Add(schemaName, mainSchema);
             }
 
-            var bodySchema = new OpenApiSchemaReference(schemaName);
+            var bodySchema = new OpenApiSchemaReference($"#/components/schemas/{schemaName}");
 
             // Initialize the whole RequestBody object inline, including the inner Content map
-            postOperation.RequestBody = new OpenApiRequestBody
+            operation.RequestBody = new OpenApiRequestBody
             {
                 Description = "Input Payload Content",
                 Content = new Dictionary<string, IOpenApiMediaType>
@@ -258,7 +286,7 @@ static class SwaggerBuilder
         }
     }
 
-    static async Task AddEndpointResponseToDocument(OpenApiDocument document, string filePath, string apiRoute, OpenApiOperation postOperation)
+    static async Task AddEndpointResponseToDocument(OpenApiDocument document, string filePath, string apiRoute, OpenApiOperation operation, HttpMethod httpVerb)
     {
         string? jsonContent = null;
         if (File.Exists(filePath))
@@ -266,7 +294,7 @@ static class SwaggerBuilder
             jsonContent = await File.ReadAllTextAsync(filePath);
         }
 
-        string schemaName = $"Response_{SanitizeSchemaName(apiRoute)}";
+        string schemaName = $"Response_{httpVerb}_{SanitizeSchemaName(apiRoute)}";
 
         var response = new OpenApiResponse { Description = "Successful execution" };
 
@@ -283,7 +311,7 @@ static class SwaggerBuilder
                 document.Components.Schemas.Add(schemaName, mainSchema);
             }
 
-            var bodySchema = new OpenApiSchemaReference(schemaName);
+            var bodySchema = new OpenApiSchemaReference($"#/components/schemas/{schemaName}");
 
             response.Content = new Dictionary<string, IOpenApiMediaType>
             {
@@ -294,7 +322,7 @@ static class SwaggerBuilder
             };
         }
 
-        postOperation.Responses!.Add("200", response);
+        operation.Responses!.Add("200", response);
     }
 
     /// <summary>
@@ -330,7 +358,7 @@ static class SwaggerBuilder
                             components.Schemas.Add(subSchemaName, subSchema);
                         }
 
-                        schema.Properties.Add(propertyName, new OpenApiSchemaReference(subSchemaName));
+                        schema.Properties.Add(propertyName, new OpenApiSchemaReference($"#/components/schemas/{subSchemaName}"));
                     }
                     else if (propertyValue.ValueKind == JsonValueKind.Array)
                     {
@@ -369,7 +397,7 @@ static class SwaggerBuilder
                         }
 
                         // FIX: Directly assign the reference object to Items
-                        schema.Items = new OpenApiSchemaReference(itemSchemaName);
+                        schema.Items = new OpenApiSchemaReference($"#/components/schemas/{itemSchemaName}");
                     }
                     else
                     {
@@ -407,7 +435,7 @@ static class SwaggerBuilder
     static string SanitizeSchemaName(string input)
     {
         if (string.IsNullOrEmpty(input)) return "Object";
-        string cleaned = input.Replace("/", "_").Replace("-", "_").Replace(" ", "_");
+        string cleaned = input.Replace("/", "_").Replace("-", "_").Replace(" ", "_").Replace("{", "_").Replace("}", "_");
         return char.ToUpper(cleaned[0]) + cleaned.Substring(1);
     }
 

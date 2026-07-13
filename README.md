@@ -12,9 +12,10 @@ See appsettings.json, your standard .net core configuration file. It should be s
 
 To set this up, create a folder structure that mirrors your api. Just pretend it's back in the days when you had to drop your HTML files into the relevant physical directory based on the path. So, for example, if you have these endpoints:
 
-- /customer/add
-- /customer/update
-- /customer/{id}/order
+- POST /customer/add
+- POST /customer/update
+- GET /customer/{id}/detail
+- POST /customer/{id}/order
 
 Create folders like so:
 
@@ -27,7 +28,9 @@ Then create json files inside them. Files can end with these extensions:
 - .output.json (schema for the 200 response, optional) (currently not handling other response codes)
 - .config.json (optional additional information, see below for schema)
 
-For example, inside /customer, create these json files, each containing an example of the json body:
+POST is almost always default in an app that wants a single string object rather than separated input params, so most of the time you can just create files named after the last segment in the URI, like "lastpart.input.json" but these URLs are also valid: "GET lastpart.input.json" and "POST lastpart.input.json" etc, all five HTTP verbs. Casing on the verb doesn't matter.
+
+For our detailed example, inside /customer, create these json files, each containing an example of the json body:
 
 - add.input.json
 - add.output.json
@@ -40,6 +43,8 @@ And inside /customer/{id}, create:
 
 - order.input.json
 - order.output.json
+- GET detail.input.json (Empty file)
+- GET detail.output.json
 
 This would generate the three endpoints mentioned.
 
@@ -94,9 +99,8 @@ But working with broken AI is so frustrating that as soon as I have something st
 
 So here are the current limits:
 
-- POST only. Everything is tunneled through post. This is a big limit, but you don't think a SOA api is going to be strict about REST verbs, do you? But I'll probably add "verb" to ".config.json" after not long.
+- Always need an .input file, but it can be empty (I might change this next)
 - No empty endpoint names (e.g. CustomerController with a default OnPost method mapping to /customer)
-- Always need an input file, but it can be empty
 
 ## The Slop Company
 
