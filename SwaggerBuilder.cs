@@ -147,7 +147,7 @@ static class SwaggerBuilder
                 _ => HttpMethod.Post
             };
             finalFile = splitUp[1];
-            apiRoute = directoryPath + "/" + finalFile;
+            apiRoute = Path.Combine(directoryPath ?? "", finalFile).Replace(Path.DirectorySeparatorChar, '/');
         }
 
         // Spaces aren't allowed in URLs unless escaped
